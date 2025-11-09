@@ -34,6 +34,8 @@ export interface DeduplicationLinkOptions {
 interface CacheEntry {
   observable: Observable<any, any>;
   timestamp: number;
+  completed?: boolean;
+  result?: any;
 }
 
 /**
@@ -109,7 +111,18 @@ export function deduplicationLink<
 
       // Check if we have a cached entry and it's not expired
       if (cachedEntry && !isExpired(cachedEntry)) {
-        // Return the cached observable directly
+        // If the request has completed and we have a result, return it immediately
+        if (cachedEntry.completed && cachedEntry.result !== undefined) {
+          return observable((observer) => {
+            // Synchronously emit the cached result
+            setTimeout(() => {
+              observer.next(cachedEntry.result);
+              observer.complete();
+            }, 0);
+            return () => {};
+          });
+        }
+        // Otherwise return the in-flight observable
         return cachedEntry.observable;
       }
 
@@ -120,59 +133,70 @@ export function deduplicationLink<
 
       // Create a shared observable with cleanup
       const source$ = next(op);
+      
+      // Store the cache entry first
+      const cacheEntry: CacheEntry = {
+        observable: null as any, // Will be set below
+        timestamp: Date.now(),
+      };
+      
+      // Enforce max size before adding new entry
+      // Only evict if we're at capacity AND adding a new key
+      if (!cache.has(key) && cache.size >= maxSize) {
+        evictOldest();
+      }
+      
+      cache.set(key, cacheEntry);
+      // Only add to keyOrder if it's a new key
+      if (!keyOrder.includes(key)) {
+        keyOrder.push(key);
+      }
+
+      let cachedResult: any = undefined;
+      let hasCompleted = false;
+
       const shared$ = source$.pipe(share());
-
-      let subscriberCount = 0;
-      let hasFinished = false;
-
+      
       // Wrap to add cleanup logic
       const wrapped$ = observable((observer) => {
-        subscriberCount++;
-        
         const subscription = shared$.subscribe({
           next(value) {
+            // Cache the result if TTL is enabled
+            if (ttl && !hasCompleted) {
+              cachedResult = value;
+              // Update the cache entry with the result
+              cacheEntry.result = value;
+            }
             observer.next(value);
           },
           error(err) {
+            // Clean up cache on error
+            cleanupKey(key);
             observer.error(err);
-            // Cleanup after all subscribers have received the error
-            subscriberCount--;
-            if (subscriberCount === 0 && !hasFinished) {
-              hasFinished = true;
-              cleanupKey(key);
-            }
           },
           complete() {
-            observer.complete();
-            // If TTL is set, don't clean up immediately
-            subscriberCount--;
-            if (subscriberCount === 0 && !hasFinished) {
-              hasFinished = true;
-              if (!ttl) {
+            if (!hasCompleted) {
+              hasCompleted = true;
+              // If TTL is set, mark as completed
+              if (ttl) {
+                cacheEntry.completed = true;
+                cacheEntry.result = cachedResult;
+              } else {
+                // No TTL, clean up immediately
                 cleanupKey(key);
               }
             }
+            observer.complete();
           },
         });
 
         return () => {
-          subscriberCount--;
           subscription.unsubscribe();
         };
       });
-
-      // Enforce max size
-      if (cache.size >= maxSize) {
-        evictOldest();
-      }
-
-      // Store in cache
-      cache.set(key, {
-        observable: wrapped$,
-        timestamp: Date.now(),
-      });
-      keyOrder.push(key);
-
+      
+      cacheEntry.observable = wrapped$;
+      
       return wrapped$;
     };
   };
