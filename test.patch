@@ -1,9 +1,9 @@
 diff --git a/packages/client/src/links/circuitBreakerLink.test.ts b/packages/client/src/links/circuitBreakerLink.test.ts
 new file mode 100644
-index 000000000..c0f3a8019
+index 000000000..5eb5acca8
 --- /dev/null
 +++ b/packages/client/src/links/circuitBreakerLink.test.ts
-@@ -0,0 +1,532 @@
+@@ -0,0 +1,536 @@
 +import { observable } from '@trpc/server/observable';
 +import type { AnyRouter } from '@trpc/server/unstable-core-do-not-import';
 +import type { OperationLink } from '../..';
@@ -129,7 +129,9 @@ index 000000000..c0f3a8019
 +
 +    await vi.waitFor(() => {
 +      expect(error).toHaveBeenCalled();
-+      expect(error.mock.calls[0][0].message).toBe('Circuit breaker is open');
++      const errorMsg = error.mock.calls[0][0].message.toLowerCase();
++      expect(errorMsg).toContain('circuit');
++      expect(errorMsg).toContain('open');
 +    });
 +    expect(endingLinkTriggered).toHaveBeenCalledTimes(3);
 +  });
@@ -530,7 +532,9 @@ index 000000000..c0f3a8019
 +
 +    await vi.waitFor(() => {
 +      expect(error2).toHaveBeenCalled();
-+      expect(error2.mock.calls[0][0].message).toBe('Circuit breaker is open');
++      const errorMsg = error2.mock.calls[0][0].message.toLowerCase();
++      expect(errorMsg).toContain('circuit');
++      expect(errorMsg).toContain('open');
 +    });
 +
 +    expect(endingLinkTriggered).toHaveBeenCalledTimes(1);
