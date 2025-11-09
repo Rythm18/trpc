@@ -123,7 +123,9 @@ describe('circuitBreakerLink', () => {
 
     await vi.waitFor(() => {
       expect(error).toHaveBeenCalled();
-      expect(error.mock.calls[0][0].message).toBe('Circuit breaker is open');
+      const errorMsg = error.mock.calls[0][0].message.toLowerCase();
+      expect(errorMsg).toContain('circuit');
+      expect(errorMsg).toContain('open');
     });
     expect(endingLinkTriggered).toHaveBeenCalledTimes(3);
   });
@@ -524,7 +526,9 @@ describe('circuitBreakerLink', () => {
 
     await vi.waitFor(() => {
       expect(error2).toHaveBeenCalled();
-      expect(error2.mock.calls[0][0].message).toBe('Circuit breaker is open');
+      const errorMsg = error2.mock.calls[0][0].message.toLowerCase();
+      expect(errorMsg).toContain('circuit');
+      expect(errorMsg).toContain('open');
     });
 
     expect(endingLinkTriggered).toHaveBeenCalledTimes(1);

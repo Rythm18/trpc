@@ -25,4 +25,7 @@ Tests should verify all state transitions, threshold behaviors, and edge cases l
 
 ## Test Assumptions
 
-Export as `circuitBreakerLink` from `packages/client/src/links/circuitBreakerLink.ts` following the standard link signature pattern used by other tRPC links.
+- Export as `circuitBreakerLink` from `packages/client/src/links/circuitBreakerLink.ts` following the standard link signature pattern used by other tRPC links
+- Configuration options: `failureThreshold`, `openToHalfOpenTimeoutMs`, `halfOpenSuccessThreshold`, and optional `onStateChange` callback
+- State callback receives one of: `'closed'`, `'open'`, or `'half-open'`
+- When circuit is open, requests should fail with an error indicating the circuit breaker blocked the request
