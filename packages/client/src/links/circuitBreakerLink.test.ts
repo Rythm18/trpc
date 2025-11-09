@@ -139,6 +139,7 @@ describe('circuitBreakerLink', () => {
       circuitBreakerLink({
         failureThreshold: 2,
         openToHalfOpenTimeoutMs: 5000,
+        halfOpenSuccessThreshold: 2,
         onStateChange: (state) => stateChanges.push(state),
       })(null as any),
       ({ op }) => {
@@ -294,6 +295,7 @@ describe('circuitBreakerLink', () => {
       circuitBreakerLink({
         failureThreshold: 2,
         openToHalfOpenTimeoutMs: 5000,
+        halfOpenSuccessThreshold: 2,
         onStateChange: (state) => stateChanges.push(state),
       })(null as any),
       ({ op }) => {
