@@ -1,9 +1,9 @@
 diff --git a/packages/client/src/links/circuitBreakerLink.ts b/packages/client/src/links/circuitBreakerLink.ts
 new file mode 100644
-index 000000000..60e9cf1e8
+index 000000000..3b8fe7635
 --- /dev/null
 +++ b/packages/client/src/links/circuitBreakerLink.ts
-@@ -0,0 +1,150 @@
+@@ -0,0 +1,164 @@
 +import { observable } from '@trpc/server/observable';
 +import type { InferrableClientTypes } from '@trpc/server/unstable-core-do-not-import';
 +import { TRPCClientError } from '../TRPCClientError';
@@ -39,6 +39,7 @@ index 000000000..60e9cf1e8
 +  consecutiveSuccesses: number;
 +  lastFailureTime: number;
 +  nextAttemptTime: number;
++  halfOpenRequestInFlight: boolean;
 +}
 +
 +/**
@@ -60,6 +61,7 @@ index 000000000..60e9cf1e8
 +      consecutiveSuccesses: 0,
 +      lastFailureTime: 0,
 +      nextAttemptTime: 0,
++      halfOpenRequestInFlight: false,
 +    };
 +
 +    function transitionTo(newState: CircuitState) {
@@ -83,7 +85,8 @@ index 000000000..60e9cf1e8
 +          }
 +          return false;
 +        case 'half-open':
-+          return true;
++          // Only allow one request at a time in half-open to test recovery
++          return !circuitState.halfOpenRequestInFlight;
 +      }
 +    }
 +
@@ -91,6 +94,7 @@ index 000000000..60e9cf1e8
 +      circuitState.consecutiveFailures = 0;
 +
 +      if (circuitState.state === 'half-open') {
++        circuitState.halfOpenRequestInFlight = false;
 +        circuitState.consecutiveSuccesses++;
 +        if (circuitState.consecutiveSuccesses >= halfOpenSuccessThreshold) {
 +          transitionTo('closed');
@@ -105,6 +109,7 @@ index 000000000..60e9cf1e8
 +      circuitState.lastFailureTime = Date.now();
 +
 +      if (circuitState.state === 'half-open') {
++        circuitState.halfOpenRequestInFlight = false;
 +        // Any failure in half-open state reopens the circuit
 +        transitionTo('open');
 +        circuitState.nextAttemptTime =
@@ -133,6 +138,11 @@ index 000000000..60e9cf1e8
 +          return;
 +        }
 +
++        // Mark request as in-flight if in half-open state
++        if (circuitState.state === 'half-open') {
++          circuitState.halfOpenRequestInFlight = true;
++        }
++
 +        const subscription = next(op).subscribe({
 +          next(value) {
 +            recordSuccess();
@@ -148,6 +158,10 @@ index 000000000..60e9cf1e8
 +        });
 +
 +        return () => {
++          // Clean up in-flight flag on unsubscribe
++          if (circuitState.state === 'half-open') {
++            circuitState.halfOpenRequestInFlight = false;
++          }
 +          subscription.unsubscribe();
 +        };
 +      });
