@@ -33,6 +33,7 @@ interface CircuitBreakerState {
   consecutiveSuccesses: number;
   lastFailureTime: number;
   nextAttemptTime: number;
+  halfOpenRequestInFlight: boolean;
 }
 
 /**
@@ -54,6 +55,7 @@ export function circuitBreakerLink<TInferrable extends InferrableClientTypes>(
       consecutiveSuccesses: 0,
       lastFailureTime: 0,
       nextAttemptTime: 0,
+      halfOpenRequestInFlight: false,
     };
 
     function transitionTo(newState: CircuitState) {
@@ -77,7 +79,8 @@ export function circuitBreakerLink<TInferrable extends InferrableClientTypes>(
           }
           return false;
         case 'half-open':
-          return true;
+          // Only allow one request at a time in half-open to test recovery
+          return !circuitState.halfOpenRequestInFlight;
       }
     }
 
@@ -85,6 +88,7 @@ export function circuitBreakerLink<TInferrable extends InferrableClientTypes>(
       circuitState.consecutiveFailures = 0;
 
       if (circuitState.state === 'half-open') {
+        circuitState.halfOpenRequestInFlight = false;
         circuitState.consecutiveSuccesses++;
         if (circuitState.consecutiveSuccesses >= halfOpenSuccessThreshold) {
           transitionTo('closed');
@@ -99,6 +103,7 @@ export function circuitBreakerLink<TInferrable extends InferrableClientTypes>(
       circuitState.lastFailureTime = Date.now();
 
       if (circuitState.state === 'half-open') {
+        circuitState.halfOpenRequestInFlight = false;
         // Any failure in half-open state reopens the circuit
         transitionTo('open');
         circuitState.nextAttemptTime =
@@ -127,6 +132,11 @@ export function circuitBreakerLink<TInferrable extends InferrableClientTypes>(
           return;
         }
 
+        // Mark request as in-flight if in half-open state
+        if (circuitState.state === 'half-open') {
+          circuitState.halfOpenRequestInFlight = true;
+        }
+
         const subscription = next(op).subscribe({
           next(value) {
             recordSuccess();
@@ -142,6 +152,10 @@ export function circuitBreakerLink<TInferrable extends InferrableClientTypes>(
         });
 
         return () => {
+          // Clean up in-flight flag on unsubscribe
+          if (circuitState.state === 'half-open') {
+            circuitState.halfOpenRequestInFlight = false;
+          }
           subscription.unsubscribe();
         };
       });

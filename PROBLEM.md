@@ -12,7 +12,7 @@ Implement a new client link following tRPC's existing link patterns (see `retryL
 
 **Open** (blocking): After reaching failure threshold, reject new requests immediately without hitting the server. Return a clear error indicating the circuit is open.
 
-**Half-open** (testing): After timeout expires, allow limited requests through. If they succeed (based on success threshold), transition to closed. Any failure reopens the circuit.
+**Half-open** (testing): After timeout expires, allow limited requests through (one at a time to test recovery without overwhelming the service). If they succeed (based on success threshold), transition to closed. Any failure reopens the circuit.
 
 The implementation should:
 - Accept configuration for failure threshold, timeout duration, and success threshold for recovery

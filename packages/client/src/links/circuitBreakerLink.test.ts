@@ -471,7 +471,7 @@ describe('circuitBreakerLink', () => {
     expect(endingLinkTriggered).toHaveBeenCalledTimes(5);
   });
 
-  test('allows requests through in half-open state', async () => {
+  test('allows limited requests through in half-open state', async () => {
     const stateChanges: string[] = [];
     const endingLinkTriggered = vi.fn();
     let requestCount = 0;
@@ -491,13 +491,16 @@ describe('circuitBreakerLink', () => {
           if (requestCount <= 2) {
             observer.error(new TRPCClientError('Server error'));
           } else {
-            observer.next({
-              result: {
-                type: 'data',
-                data: { input: op.input },
-              },
-            });
-            observer.complete();
+            // Add delay to simulate async request
+            setTimeout(() => {
+              observer.next({
+                result: {
+                  type: 'data',
+                  data: { input: op.input },
+                },
+              });
+              observer.complete();
+            }, 10);
           }
         });
       },
@@ -549,30 +552,93 @@ describe('circuitBreakerLink', () => {
     // Advance time to half-open
     vi.advanceTimersByTime(5000);
 
-    // In half-open, requests should be allowed through (not rejected)
-    // Make 3 successful requests to close the circuit
-    for (let i = 0; i < 3; i++) {
-      const success = vi.fn();
-      createChain<AnyRouter, unknown, unknown>({
-        links,
-        op: {
-          type: 'query',
-          id: i + 3,
-          input: 'test',
-          path: 'test',
-          context: {},
-          signal: null,
-        },
-      }).subscribe({ next: success });
+    // In half-open, only ONE request at a time should be allowed
+    // Start first request (should be allowed)
+    const success1 = vi.fn();
+    const error1 = vi.fn();
+    createChain<AnyRouter, unknown, unknown>({
+      links,
+      op: {
+        type: 'query',
+        id: 3,
+        input: 'test',
+        path: 'test',
+        context: {},
+        signal: null,
+      },
+    }).subscribe({ next: success1, error: error1 });
 
-      await vi.waitFor(() => {
-        expect(success).toHaveBeenCalled();
-      });
-    }
+    // While first request is in-flight, second concurrent request should be REJECTED
+    const success2 = vi.fn();
+    const error2 = vi.fn();
+    createChain<AnyRouter, unknown, unknown>({
+      links,
+      op: {
+        type: 'query',
+        id: 4,
+        input: 'test',
+        path: 'test',
+        context: {},
+        signal: null,
+      },
+    }).subscribe({ next: success2, error: error2 });
+
+    // Second request should be immediately rejected (circuit showing open/limiting)
+    await vi.waitFor(() => {
+      expect(error2).toHaveBeenCalled();
+      const errorMsg = error2.mock.calls[0][0].message.toLowerCase();
+      expect(errorMsg).toContain('circuit');
+      expect(errorMsg).toContain('open');
+    });
+
+    // First request should succeed
+    vi.advanceTimersByTime(20);
+    await vi.waitFor(() => {
+      expect(success1).toHaveBeenCalled();
+    });
+
+    // After first request completes, next request should be allowed
+    const success3 = vi.fn();
+    createChain<AnyRouter, unknown, unknown>({
+      links,
+      op: {
+        type: 'query',
+        id: 5,
+        input: 'test',
+        path: 'test',
+        context: {},
+        signal: null,
+      },
+    }).subscribe({ next: success3 });
+
+    vi.advanceTimersByTime(20);
+    await vi.waitFor(() => {
+      expect(success3).toHaveBeenCalled();
+    });
+
+    // Third request to reach success threshold
+    const success4 = vi.fn();
+    createChain<AnyRouter, unknown, unknown>({
+      links,
+      op: {
+        type: 'query',
+        id: 6,
+        input: 'test',
+        path: 'test',
+        context: {},
+        signal: null,
+      },
+    }).subscribe({ next: success4 });
+
+    vi.advanceTimersByTime(20);
+    await vi.waitFor(() => {
+      expect(success4).toHaveBeenCalled();
+    });
 
     // Should transition from open -> half-open -> closed
     expect(stateChanges).toEqual(['open', 'half-open', 'closed']);
     // 2 failures + 3 successes in half-open = 5 requests reached server
+    // (second concurrent request was blocked before reaching server)
     expect(endingLinkTriggered).toHaveBeenCalledTimes(5);
   });
 
