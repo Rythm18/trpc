@@ -1,9 +1,9 @@
 diff --git a/packages/client/src/links/circuitBreakerLink.test.ts b/packages/client/src/links/circuitBreakerLink.test.ts
 new file mode 100644
-index 000000000..43cc633b1
+index 000000000..9172b7e29
 --- /dev/null
 +++ b/packages/client/src/links/circuitBreakerLink.test.ts
-@@ -0,0 +1,708 @@
+@@ -0,0 +1,710 @@
 +import { observable } from '@trpc/server/observable';
 +import type { AnyRouter } from '@trpc/server/unstable-core-do-not-import';
 +import type { OperationLink } from '../..';
@@ -145,6 +145,7 @@ index 000000000..43cc633b1
 +      circuitBreakerLink({
 +        failureThreshold: 2,
 +        openToHalfOpenTimeoutMs: 5000,
++        halfOpenSuccessThreshold: 2,
 +        onStateChange: (state) => stateChanges.push(state),
 +      })(null as any),
 +      ({ op }) => {
@@ -300,6 +301,7 @@ index 000000000..43cc633b1
 +      circuitBreakerLink({
 +        failureThreshold: 2,
 +        openToHalfOpenTimeoutMs: 5000,
++        halfOpenSuccessThreshold: 2,
 +        onStateChange: (state) => stateChanges.push(state),
 +      })(null as any),
 +      ({ op }) => {
