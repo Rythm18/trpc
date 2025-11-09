@@ -1,9 +1,9 @@
 diff --git a/packages/client/src/links/circuitBreakerLink.test.ts b/packages/client/src/links/circuitBreakerLink.test.ts
 new file mode 100644
-index 000000000..5eb5acca8
+index 000000000..24937c476
 --- /dev/null
 +++ b/packages/client/src/links/circuitBreakerLink.test.ts
-@@ -0,0 +1,536 @@
+@@ -0,0 +1,642 @@
 +import { observable } from '@trpc/server/observable';
 +import type { AnyRouter } from '@trpc/server/unstable-core-do-not-import';
 +import type { OperationLink } from '../..';
@@ -306,9 +306,8 @@ index 000000000..5eb5acca8
 +        return observable((observer) => {
 +          endingLinkTriggered();
 +          requestCount++;
-+          if (requestCount !== 2) {
-+            observer.error(new TRPCClientError('Server error'));
-+          } else {
++          // Fail on requests 1, 2, and 4; succeed on request 3
++          if (requestCount === 3) {
 +            observer.next({
 +              result: {
 +                type: 'data',
@@ -316,6 +315,8 @@ index 000000000..5eb5acca8
 +              },
 +            });
 +            observer.complete();
++          } else {
++            observer.error(new TRPCClientError('Server error'));
 +          }
 +        });
 +      },
@@ -473,6 +474,111 @@ index 000000000..5eb5acca8
 +    }
 +
 +    // All 5 requests should have reached the ending link
++    expect(endingLinkTriggered).toHaveBeenCalledTimes(5);
++  });
++
++  test('allows requests through in half-open state', async () => {
++    const stateChanges: string[] = [];
++    const endingLinkTriggered = vi.fn();
++    let requestCount = 0;
++
++    const links: OperationLink<AnyRouter, any, any>[] = [
++      circuitBreakerLink({
++        failureThreshold: 2,
++        openToHalfOpenTimeoutMs: 5000,
++        halfOpenSuccessThreshold: 3,
++        onStateChange: (state) => stateChanges.push(state),
++      })(null as any),
++      ({ op }) => {
++        return observable((observer) => {
++          endingLinkTriggered();
++          requestCount++;
++          // First 2 fail, then all succeed
++          if (requestCount <= 2) {
++            observer.error(new TRPCClientError('Server error'));
++          } else {
++            observer.next({
++              result: {
++                type: 'data',
++                data: { input: op.input },
++              },
++            });
++            observer.complete();
++          }
++        });
++      },
++    ];
++
++    // Open circuit with 2 failures
++    for (let i = 0; i < 2; i++) {
++      const error = vi.fn();
++      createChain<AnyRouter, unknown, unknown>({
++        links,
++        op: {
++          type: 'query',
++          id: i,
++          input: 'test',
++          path: 'test',
++          context: {},
++          signal: null,
++        },
++      }).subscribe({ error });
++
++      await vi.waitFor(() => {
++        expect(error).toHaveBeenCalled();
++      });
++    }
++
++    expect(stateChanges).toEqual(['open']);
++
++    // Circuit should reject while open
++    const rejectedError = vi.fn();
++    createChain<AnyRouter, unknown, unknown>({
++      links,
++      op: {
++        type: 'query',
++        id: 2,
++        input: 'test',
++        path: 'test',
++        context: {},
++        signal: null,
++      },
++    }).subscribe({ error: rejectedError });
++
++    await vi.waitFor(() => {
++      expect(rejectedError).toHaveBeenCalled();
++      const errorMsg = rejectedError.mock.calls[0][0].message.toLowerCase();
++      expect(errorMsg).toContain('circuit');
++      expect(errorMsg).toContain('open');
++    });
++
++    // Advance time to half-open
++    vi.advanceTimersByTime(5000);
++
++    // In half-open, requests should be allowed through (not rejected)
++    // Make 3 successful requests to close the circuit
++    for (let i = 0; i < 3; i++) {
++      const success = vi.fn();
++      createChain<AnyRouter, unknown, unknown>({
++        links,
++        op: {
++          type: 'query',
++          id: i + 3,
++          input: 'test',
++          path: 'test',
++          context: {},
++          signal: null,
++        },
++      }).subscribe({ next: success });
++
++      await vi.waitFor(() => {
++        expect(success).toHaveBeenCalled();
++      });
++    }
++
++    // Should transition from open -> half-open -> closed
++    expect(stateChanges).toEqual(['open', 'half-open', 'closed']);
++    // 2 failures + 3 successes in half-open = 5 requests reached server
 +    expect(endingLinkTriggered).toHaveBeenCalledTimes(5);
 +  });
 +
