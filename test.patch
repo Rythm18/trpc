@@ -1,3 +1,26 @@
+diff --git a/test.sh b/test.sh
+new file mode 100755
+index 000000000..92f0c4fd2
+--- /dev/null
++++ b/test.sh
+@@ -0,0 +1,17 @@
++#!/bin/bash
++set -e
++
++case "$1" in
++  base)
++    # Run existing deduplication tests
++    pnpm vitest --run packages/client/src/links/internals/dedupeLink.test.ts
++    ;;
++  new)
++    # Run newly added request deduplication tests
++    pnpm vitest --run packages/client/src/links/deduplicationLink.test.ts
++    ;;
++  *)
++    echo "Usage: ./test.sh {base|new}"
++    exit 1
++    ;;
++esac
 diff --git a/packages/client/src/links/deduplicationLink.test.ts b/packages/client/src/links/deduplicationLink.test.ts
 new file mode 100644
 index 000000000..e65df558a
@@ -689,31 +712,3 @@ index 000000000..e65df558a
 +    expect(endingLinkTriggered).toHaveBeenCalledTimes(2);
 +  });
 +});
-diff --git a/test.sh b/test.sh
-new file mode 100755
-index 000000000..8e2d89bdd
---- /dev/null
-+++ b/test.sh
-@@ -0,0 +1,22 @@
-+#!/bin/bash
-+
-+set -e
-+
-+case "$1" in
-+  base)
-+    echo "Running base tests..."
-+    cd /workspace
-+    pnpm test -- --watch false --run packages/client/src/links/internals/dedupeLink.test.ts
-+    ;;
-+  new)
-+    echo "Running new request deduplication tests..."
-+    cd /workspace
-+    pnpm test -- --watch false --run packages/client/src/links/deduplicationLink.test.ts
-+    ;;
-+  *)
-+    echo "Usage: $0 {base|new}"
-+    echo "  base - Run existing deduplication tests"
-+    echo "  new  - Run new request deduplication feature tests"
-+    exit 1
-+    ;;
-+esac
