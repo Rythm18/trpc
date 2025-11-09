@@ -1,0 +1,769 @@
+diff --git a/test.sh b/test.sh
+new file mode 100755
+index 000000000..92f0c4fd2
+--- /dev/null
++++ b/test.sh
+@@ -0,0 +1,17 @@
++#!/bin/bash
++set -e
++
++case "$1" in
++  base)
++    # Run existing deduplication tests
++    pnpm vitest --run packages/client/src/links/internals/dedupeLink.test.ts
++    ;;
++  new)
++    # Run newly added request deduplication tests
++    pnpm vitest --run packages/client/src/links/deduplicationLink.test.ts
++    ;;
++  *)
++    echo "Usage: ./test.sh {base|new}"
++    exit 1
++    ;;
++esac
+diff --git a/packages/client/src/links/deduplicationLink.test.ts b/packages/client/src/links/deduplicationLink.test.ts
+new file mode 100644
+index 000000000..e101ad33d
+--- /dev/null
++++ b/packages/client/src/links/deduplicationLink.test.ts
+@@ -0,0 +1,740 @@
++import { observable } from '@trpc/server/observable';
++import type { AnyRouter } from '@trpc/server/unstable-core-do-not-import';
++import { beforeEach, describe, expect, test, vi } from 'vitest';
++import type { OperationLink } from '..';
++import { createChain } from './internals/createChain';
++import { deduplicationLink, type DeduplicationLinkOptions } from './deduplicationLink';
++
++describe('deduplicationLink', () => {
++  beforeEach(() => {
++    vi.useFakeTimers();
++  });
++
++  test('exports are available', () => {
++    // Verify the link function is exported
++    expect(typeof deduplicationLink).toBe('function');
++    
++    // Verify TypeScript interface is available (compile-time check)
++    const _options: DeduplicationLinkOptions = {
++      ttl: 1000,
++      maxSize: 10,
++    };
++    expect(_options).toBeDefined();
++  });
++
++  test('deduplicates identical query requests', async () => {
++    const endingLinkTriggered = vi.fn();
++    const links: OperationLink<AnyRouter, any, any>[] = [
++      deduplicationLink()(null as any),
++      ({ op }) => {
++        return observable((subscribe) => {
++          endingLinkTriggered();
++          setTimeout(() => {
++            subscribe.next({
++              result: {
++                type: 'data',
++                data: { input: op.input },
++              },
++            });
++            subscribe.complete();
++          }, 100);
++          return () => {};
++        });
++      },
++    ];
++
++    const call1 = createChain<AnyRouter, unknown, unknown>({
++      links,
++      op: {
++        type: 'query',
++        id: 1,
++        input: 'test-input',
++        path: 'greeting',
++        context: {},
++        signal: null,
++      },
++    });
++
++    const call2 = createChain<AnyRouter, unknown, unknown>({
++      links,
++      op: {
++        type: 'query',
++        id: 2,
++        input: 'test-input',
++        path: 'greeting',
++        context: {},
++        signal: null,
++      },
++    });
++
++    const next1 = vi.fn();
++    const next2 = vi.fn();
++    call1.subscribe({ next: next1 });
++    call2.subscribe({ next: next2 });
++
++    // Should only trigger the ending link once since requests are identical
++    expect(endingLinkTriggered).toHaveBeenCalledTimes(1);
++
++    vi.advanceTimersByTime(100);
++    await vi.waitUntil(() => next1.mock.calls.length === 1 && next2.mock.calls.length === 1);
++
++    expect(next1).toHaveBeenCalledTimes(1);
++    expect(next2).toHaveBeenCalledTimes(1);
++  });
++
++  test('does not deduplicate different query requests', async () => {
++    const endingLinkTriggered = vi.fn();
++    const links: OperationLink<AnyRouter, any, any>[] = [
++      deduplicationLink()(null as any),
++      ({ op }) => {
++        return observable((subscribe) => {
++          endingLinkTriggered();
++          setTimeout(() => {
++            subscribe.next({
++              result: {
++                type: 'data',
++                data: { input: op.input },
++              },
++            });
++            subscribe.complete();
++          }, 100);
++          return () => {};
++        });
++      },
++    ];
++
++    const call1 = createChain<AnyRouter, unknown, unknown>({
++      links,
++      op: {
++        type: 'query',
++        id: 1,
++        input: 'input1',
++        path: 'greeting',
++        context: {},
++        signal: null,
++      },
++    });
++
++    const call2 = createChain<AnyRouter, unknown, unknown>({
++      links,
++      op: {
++        type: 'query',
++        id: 2,
++        input: 'input2',
++        path: 'greeting',
++        context: {},
++        signal: null,
++      },
++    });
++
++    const next1 = vi.fn();
++    const next2 = vi.fn();
++    call1.subscribe({ next: next1 });
++    call2.subscribe({ next: next2 });
++
++    // Should trigger ending link twice for different inputs
++    expect(endingLinkTriggered).toHaveBeenCalledTimes(2);
++
++    vi.advanceTimersByTime(100);
++    await vi.waitUntil(() => next1.mock.calls.length === 1 && next2.mock.calls.length === 1);
++
++    expect(next1).toHaveBeenCalledTimes(1);
++    expect(next2).toHaveBeenCalledTimes(1);
++  });
++
++  test('does not deduplicate mutations by default', async () => {
++    const endingLinkTriggered = vi.fn();
++    const links: OperationLink<AnyRouter, any, any>[] = [
++      deduplicationLink()(null as any),
++      ({ op }) => {
++        return observable((subscribe) => {
++          endingLinkTriggered();
++          setTimeout(() => {
++            subscribe.next({
++              result: {
++                type: 'data',
++                data: { input: op.input },
++              },
++            });
++            subscribe.complete();
++          }, 100);
++          return () => {};
++        });
++      },
++    ];
++
++    const call1 = createChain<AnyRouter, unknown, unknown>({
++      links,
++      op: {
++        type: 'mutation',
++        id: 1,
++        input: 'test-input',
++        path: 'create',
++        context: {},
++        signal: null,
++      },
++    });
++
++    const call2 = createChain<AnyRouter, unknown, unknown>({
++      links,
++      op: {
++        type: 'mutation',
++        id: 2,
++        input: 'test-input',
++        path: 'create',
++        context: {},
++        signal: null,
++      },
++    });
++
++    const next1 = vi.fn();
++    const next2 = vi.fn();
++    call1.subscribe({ next: next1 });
++    call2.subscribe({ next: next2 });
++
++    // Mutations should not be deduplicated
++    expect(endingLinkTriggered).toHaveBeenCalledTimes(2);
++
++    vi.advanceTimersByTime(100);
++    await vi.waitUntil(() => next1.mock.calls.length === 1 && next2.mock.calls.length === 1);
++
++    expect(next1).toHaveBeenCalledTimes(1);
++    expect(next2).toHaveBeenCalledTimes(1);
++  });
++
++  test('caches completed requests within TTL', async () => {
++    const endingLinkTriggered = vi.fn();
++    const links: OperationLink<AnyRouter, any, any>[] = [
++      deduplicationLink({ ttl: 500 })(null as any),
++      ({ op }) => {
++        return observable((subscribe) => {
++          endingLinkTriggered();
++          setTimeout(() => {
++            subscribe.next({
++              result: {
++                type: 'data',
++                data: { input: op.input },
++              },
++            });
++            subscribe.complete();
++          }, 100);
++          return () => {};
++        });
++      },
++    ];
++
++    // First call
++    const call1 = createChain<AnyRouter, unknown, unknown>({
++      links,
++      op: {
++        type: 'query',
++        id: 1,
++        input: 'test',
++        path: 'greeting',
++        context: {},
++        signal: null,
++      },
++    });
++
++    const next1 = vi.fn();
++    call1.subscribe({ next: next1 });
++    
++    vi.advanceTimersByTime(100);
++    await vi.waitUntil(() => next1.mock.calls.length === 1);
++    expect(endingLinkTriggered).toHaveBeenCalledTimes(1);
++
++    // Second call AFTER first completes but WITHIN TTL - should use cache
++    vi.advanceTimersByTime(200); // Total elapsed: 300ms, within 500ms TTL
++    
++    const call2 = createChain<AnyRouter, unknown, unknown>({
++      links,
++      op: {
++        type: 'query',
++        id: 2,
++        input: 'test',
++        path: 'greeting',
++        context: {},
++        signal: null,
++      },
++    });
++
++    const next2 = vi.fn();
++    call2.subscribe({ next: next2 });
++    
++    // Should reuse cached result, no new network call
++    expect(endingLinkTriggered).toHaveBeenCalledTimes(1);
++    
++    vi.advanceTimersByTime(100);
++    await vi.waitUntil(() => next2.mock.calls.length === 1);
++
++    // Wait for TTL to expire
++    vi.advanceTimersByTime(300); // Total elapsed: 700ms, past 500ms TTL
++
++    // Third call after TTL expires - should trigger new request
++    const call3 = createChain<AnyRouter, unknown, unknown>({
++      links,
++      op: {
++        type: 'query',
++        id: 3,
++        input: 'test',
++        path: 'greeting',
++        context: {},
++        signal: null,
++      },
++    });
++
++    const next3 = vi.fn();
++    call3.subscribe({ next: next3 });
++    
++    vi.advanceTimersByTime(100);
++    await vi.waitUntil(() => next3.mock.calls.length === 1);
++
++    expect(endingLinkTriggered).toHaveBeenCalledTimes(2);
++  });
++
++  test('evicts oldest entry when maxSize exceeded (LRU)', async () => {
++    const endingLinkTriggered = vi.fn();
++    const links: OperationLink<AnyRouter, any, any>[] = [
++      deduplicationLink({ maxSize: 2, ttl: 1000 })(null as any),
++      ({ op }) => {
++        return observable((subscribe) => {
++          endingLinkTriggered();
++          setTimeout(() => {
++            subscribe.next({
++              result: {
++                type: 'data',
++                data: { input: op.input },
++              },
++            });
++            subscribe.complete();
++          }, 50);
++          return () => {};
++        });
++      },
++    ];
++
++    // Create 3 different requests to exceed maxSize of 2
++    for (let i = 1; i <= 3; i++) {
++      const call = createChain<AnyRouter, unknown, unknown>({
++        links,
++        op: {
++          type: 'query',
++          id: i,
++          input: `input${i}`,
++          path: 'greeting',
++          context: {},
++          signal: null,
++        },
++      });
++
++      const next = vi.fn();
++      call.subscribe({ next });
++      vi.advanceTimersByTime(50);
++      await vi.waitUntil(() => next.mock.calls.length === 1);
++    }
++
++    expect(endingLinkTriggered).toHaveBeenCalledTimes(3);
++
++    // Now try to reuse first request (should be evicted due to LRU)
++    const call1Again = createChain<AnyRouter, unknown, unknown>({
++      links,
++      op: {
++        type: 'query',
++        id: 4,
++        input: 'input1', // Same as first request
++        path: 'greeting',
++        context: {},
++        signal: null,
++      },
++    });
++
++    const nextAgain = vi.fn();
++    call1Again.subscribe({ next: nextAgain });
++    
++    // Should trigger new request because first entry was evicted
++    expect(endingLinkTriggered).toHaveBeenCalledTimes(4);
++    
++    vi.advanceTimersByTime(50);
++    await vi.waitUntil(() => nextAgain.mock.calls.length === 1);
++
++    // Now try to reuse third request (should still be in cache)
++    const call3Again = createChain<AnyRouter, unknown, unknown>({
++      links,
++      op: {
++        type: 'query',
++        id: 5,
++        input: 'input3', // Same as third request
++        path: 'greeting',
++        context: {},
++        signal: null,
++      },
++    });
++
++    const next3Again = vi.fn();
++    call3Again.subscribe({ next: next3Again });
++    
++    // Should NOT trigger new request - input3 still cached
++    expect(endingLinkTriggered).toHaveBeenCalledTimes(4);
++    
++    vi.advanceTimersByTime(50);
++    await vi.waitUntil(() => next3Again.mock.calls.length === 1);
++    
++    // input2 was evicted when input1Again was added, so trying to access it makes a new request
++    const call2Again = createChain<AnyRouter, unknown, unknown>({
++      links,
++      op: {
++        type: 'query',
++        id: 6,
++        input: 'input2',
++        path: 'greeting',
++        context: {},
++        signal: null,
++      },
++    });
++
++    const next2Again = vi.fn();
++    call2Again.subscribe({ next: next2Again });
++    
++    // Should trigger new request - input2 was evicted
++    expect(endingLinkTriggered).toHaveBeenCalledTimes(5);
++  });
++
++  test('cleans up cache on error', async () => {
++    const endingLinkTriggered = vi.fn();
++    const errorHandler = vi.fn();
++
++    const links: OperationLink<AnyRouter, any, any>[] = [
++      deduplicationLink()(null as any),
++      () => {
++        return observable((subscribe) => {
++          endingLinkTriggered();
++          setTimeout(() => {
++            subscribe.error(new Error('Test error'));
++          }, 100);
++          return () => {};
++        });
++      },
++    ];
++
++    const call1 = createChain<AnyRouter, unknown, unknown>({
++      links,
++      op: {
++        type: 'query',
++        id: 1,
++        input: 'test',
++        path: 'greeting',
++        context: {},
++        signal: null,
++      },
++    });
++
++    call1.subscribe({ error: errorHandler });
++
++    vi.advanceTimersByTime(100);
++    await vi.waitUntil(() => errorHandler.mock.calls.length === 1);
++
++    expect(errorHandler).toHaveBeenCalledTimes(1);
++
++    // After error, a new request should trigger the link again
++    const call2 = createChain<AnyRouter, unknown, unknown>({
++      links,
++      op: {
++        type: 'query',
++        id: 2,
++        input: 'test',
++        path: 'greeting',
++        context: {},
++        signal: null,
++      },
++    });
++
++    call2.subscribe({ error: vi.fn() });
++    expect(endingLinkTriggered).toHaveBeenCalledTimes(2);
++  });
++
++  test('cancelling one request does not cancel other deduplicated requests', async () => {
++    const endingLinkTriggered = vi.fn();
++    const links: OperationLink<AnyRouter, any, any>[] = [
++      deduplicationLink()(null as any),
++      ({ op }) => {
++        return observable((subscribe) => {
++          endingLinkTriggered();
++          const timer = setTimeout(() => {
++            subscribe.next({
++              result: {
++                type: 'data',
++                data: { input: op.input },
++              },
++            });
++            subscribe.complete();
++          }, 100);
++          return () => {
++            clearTimeout(timer);
++          };
++        });
++      },
++    ];
++
++    const call1 = createChain<AnyRouter, unknown, unknown>({
++      links,
++      op: {
++        type: 'query',
++        id: 1,
++        input: 'test',
++        path: 'greeting',
++        context: {},
++        signal: null,
++      },
++    });
++
++    const call2 = createChain<AnyRouter, unknown, unknown>({
++      links,
++      op: {
++        type: 'query',
++        id: 2,
++        input: 'test',
++        path: 'greeting',
++        context: {},
++        signal: null,
++      },
++    });
++
++    const next1 = vi.fn();
++    const next2 = vi.fn();
++    const subscription1 = call1.subscribe({ next: next1 });
++    call2.subscribe({ next: next2 });
++
++    expect(endingLinkTriggered).toHaveBeenCalledTimes(1);
++
++    // Cancel first subscription
++    subscription1.unsubscribe();
++
++    vi.advanceTimersByTime(100);
++    await vi.waitUntil(() => next2.mock.calls.length === 1);
++
++    // First should not be called (cancelled)
++    expect(next1).toHaveBeenCalledTimes(0);
++    // Second should still complete
++    expect(next2).toHaveBeenCalledTimes(1);
++  });
++
++  test('supports custom shouldDeduplicateOperation function', async () => {
++    const endingLinkTriggered = vi.fn();
++    const links: OperationLink<AnyRouter, any, any>[] = [
++      deduplicationLink({
++        shouldDeduplicateOperation: (op) => {
++          // Custom logic: only deduplicate queries to specific path
++          return op.type === 'query' && op.path === 'greeting';
++        },
++      })(null as any),
++      ({ op }) => {
++        return observable((subscribe) => {
++          endingLinkTriggered();
++          setTimeout(() => {
++            subscribe.next({
++              result: {
++                type: 'data',
++                data: { input: op.input },
++              },
++            });
++            subscribe.complete();
++          }, 100);
++          return () => {};
++        });
++      },
++    ];
++
++    // Should deduplicate - matches custom condition
++    const call1a = createChain<AnyRouter, unknown, unknown>({
++      links,
++      op: {
++        type: 'query',
++        id: 1,
++        input: 'test',
++        path: 'greeting',
++        context: {},
++        signal: null,
++      },
++    });
++
++    const call1b = createChain<AnyRouter, unknown, unknown>({
++      links,
++      op: {
++        type: 'query',
++        id: 2,
++        input: 'test',
++        path: 'greeting',
++        context: {},
++        signal: null,
++      },
++    });
++
++    call1a.subscribe({ next: vi.fn() });
++    call1b.subscribe({ next: vi.fn() });
++
++    expect(endingLinkTriggered).toHaveBeenCalledTimes(1);
++
++    vi.advanceTimersByTime(100);
++    await vi.waitUntil(() => endingLinkTriggered.mock.calls.length === 1);
++
++    // Should NOT deduplicate - doesn't match custom condition
++    const call2a = createChain<AnyRouter, unknown, unknown>({
++      links,
++      op: {
++        type: 'query',
++        id: 3,
++        input: 'test',
++        path: 'other',
++        context: {},
++        signal: null,
++      },
++    });
++
++    const call2b = createChain<AnyRouter, unknown, unknown>({
++      links,
++      op: {
++        type: 'query',
++        id: 4,
++        input: 'test',
++        path: 'other',
++        context: {},
++        signal: null,
++      },
++    });
++
++    call2a.subscribe({ next: vi.fn() });
++    call2b.subscribe({ next: vi.fn() });
++
++    expect(endingLinkTriggered).toHaveBeenCalledTimes(3);
++  });
++
++  test('supports custom getKey function', async () => {
++    const endingLinkTriggered = vi.fn();
++    const links: OperationLink<AnyRouter, any, any>[] = [
++      deduplicationLink({
++        getKey: (op) => {
++          // Custom key: only consider path, ignore input
++          return op.path;
++        },
++      })(null as any),
++      ({ op }) => {
++        return observable((subscribe) => {
++          endingLinkTriggered();
++          setTimeout(() => {
++            subscribe.next({
++              result: {
++                type: 'data',
++                data: { input: op.input },
++              },
++            });
++            subscribe.complete();
++          }, 100);
++          return () => {};
++        });
++      },
++    ];
++
++    const call1 = createChain<AnyRouter, unknown, unknown>({
++      links,
++      op: {
++        type: 'query',
++        id: 1,
++        input: 'different-input-1',
++        path: 'greeting',
++        context: {},
++        signal: null,
++      },
++    });
++
++    const call2 = createChain<AnyRouter, unknown, unknown>({
++      links,
++      op: {
++        type: 'query',
++        id: 2,
++        input: 'different-input-2',
++        path: 'greeting',
++        context: {},
++        signal: null,
++      },
++    });
++
++    const next1 = vi.fn();
++    const next2 = vi.fn();
++    call1.subscribe({ next: next1 });
++    call2.subscribe({ next: next2 });
++
++    // Should deduplicate despite different inputs due to custom key
++    expect(endingLinkTriggered).toHaveBeenCalledTimes(1);
++
++    vi.advanceTimersByTime(100);
++    await vi.waitUntil(() => next1.mock.calls.length === 1 && next2.mock.calls.length === 1);
++
++    expect(next1).toHaveBeenCalledTimes(1);
++    expect(next2).toHaveBeenCalledTimes(1);
++  });
++
++  test('clears cache on request completion when no TTL', async () => {
++    const endingLinkTriggered = vi.fn();
++    const links: OperationLink<AnyRouter, any, any>[] = [
++      deduplicationLink()(null as any),
++      ({ op }) => {
++        return observable((subscribe) => {
++          endingLinkTriggered();
++          setTimeout(() => {
++            subscribe.next({
++              result: {
++                type: 'data',
++                data: { input: op.input },
++              },
++            });
++            subscribe.complete();
++          }, 100);
++          return () => {};
++        });
++      },
++    ];
++
++    // First request
++    const call1 = createChain<AnyRouter, unknown, unknown>({
++      links,
++      op: {
++        type: 'query',
++        id: 1,
++        input: 'test',
++        path: 'greeting',
++        context: {},
++        signal: null,
++      },
++    });
++
++    const next1 = vi.fn();
++    call1.subscribe({ next: next1 });
++
++    vi.advanceTimersByTime(100);
++    await vi.waitUntil(() => next1.mock.calls.length === 1);
++
++    expect(endingLinkTriggered).toHaveBeenCalledTimes(1);
++
++    // Second request after first completes - should trigger new request
++    const call2 = createChain<AnyRouter, unknown, unknown>({
++      links,
++      op: {
++        type: 'query',
++        id: 2,
++        input: 'test',
++        path: 'greeting',
++        context: {},
++        signal: null,
++      },
++    });
++
++    const next2 = vi.fn();
++    call2.subscribe({ next: next2 });
++
++    vi.advanceTimersByTime(100);
++    await vi.waitUntil(() => next2.mock.calls.length === 1);
++
++    // Should trigger new request since no TTL
++    expect(endingLinkTriggered).toHaveBeenCalledTimes(2);
++  });
++});
